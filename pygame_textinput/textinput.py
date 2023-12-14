@@ -7,7 +7,7 @@ class TextInput:
 
         Usage
         ------------
-        `handle_event` and `draw` must be called every frame
+        `handle_event` and `draw` must be called every frame, `set_on_submit` can be used to do different actions
     '''
 
     def __init__(self,
@@ -37,6 +37,7 @@ class TextInput:
         self.background_color = background_color
         self.active_background_color = background_color
         self.inactive_background_color = background_color
+        self.hover_background_color = background_color
         self.outline_color = outline_color
         self.outline_width = outline_width
         self.padding = padding
@@ -48,6 +49,8 @@ class TextInput:
 
         self.submit_action = None
         self.submit_do_default = True
+        self.on_active_action = None
+        self.on_hover_action = None
 
         self.pressing_down = None
         self.pressing_down_time = 0
@@ -69,11 +72,22 @@ class TextInput:
             Time difference from last frame
         '''
         for event in events:
+            if event.type == pygame.MOUSEMOTION:
+                if self.rect.collidepoint(event.pos):
+                    self.background_color = self.hover_background_color
+                    if self.on_hover_action:
+                        self.on_hover_action(self)
+                else:
+                    self.background_color = self.active_background_color if self.active else self.inactive_background_color
             if event.type == pygame.MOUSEBUTTONDOWN:
                 if self.rect.collidepoint(event.pos):
+                    self.background_color = self.active_background_color
+                    if self.on_active_action and not self.active:
+                        self.on_active_action(self)
                     self.active = True
                 else:
                     self.active = False
+                    self.background_color = self.inactive_background_color
             if self.active:
                 # Check key presses
                 if event.type == pygame.KEYDOWN:
@@ -137,7 +151,7 @@ class TextInput:
                 self.text[self.pointer:], True, self.text_color).get_width()
             pointer_loc = text_surface_width - text_width_right_of_pointer
             pointer_surface = pygame.Surface(
-                (self.font.get_height() // self.padding * 2, self.font.get_height()))
+                (self.font.get_height() // 10, self.font.get_height()))
             if self.pointer_animation_showing:
                 pointer_surface.fill(self.text_color)
             else:
@@ -184,6 +198,28 @@ class TextInput:
 
     def set_inactive_background_color(self, color: tuple):
         self.inactive_background_color = color
+    
+    def set_hover_background_color(self, color: tuple):
+        self.hover_background_color = color
+    
+    def set_on_hover(self, func):
+        '''Set action when the text box is hovered on
+
+        Parameters
+        ----------
+        func
+            Function to be called, take in 1 argument: self
+        '''
+        self.on_hover_action = func
+    def set_on_active(self, func):
+        '''Set action when the text box is clicked and set from not active to active
+
+        Parameters
+        ----------
+        func
+            Function to be called, take in 1 argument: self
+        '''
+        self.on_active_action = func
 
     def set_on_submit(self, func, do_default: bool = True):
         '''Set action when return is pressed
@@ -212,9 +248,9 @@ class TextInput:
         self.pointer = 0
         self.text = ""
         self.active = False
+        self.background_color = self.inactive_background_color
 
     def draw(self, screen: pygame.Surface):
-        self.background_color = self.active_background_color if self.active else self.inactive_background_color
         pygame.draw.rect(screen, self.background_color, self.rect)
         pygame.draw.rect(
             screen,
