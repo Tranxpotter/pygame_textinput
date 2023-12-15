@@ -15,6 +15,7 @@ class TextInput:
                  y: int | float,
                  width: int | float,
                  height: int | float,
+                 border_radius: int = 0,
                  text: str = "",
                  placeholder: str = "",
                  font: pygame.font.Font = pygame.font.Font(None, 10),
@@ -28,10 +29,14 @@ class TextInput:
         self.y = y
         self.width = width
         self.height = height
-        self.rect = pygame.Rect(x, y, width, height)
+        self.border_radius = border_radius
+        self.border_top_left_radius = border_radius
+        self.border_top_right_radius = border_radius
+        self.border_bottom_left_radius = border_radius
+        self.border_bottom_right_radius = border_radius
         self.text = text
         self.pointer = 0
-        self.position_shift = 0
+        self._position_shift = 0
         self.placeholder = placeholder
         self.font = font
         self.background_color = background_color
@@ -46,22 +51,31 @@ class TextInput:
         self.text_surface = font.render(self.text, True, text_color)
 
         self.active = False
+        self._activate_mouse_button = None
+        self._activate_key = None
 
         self.submit_action = None
         self.submit_do_default = True
         self.on_active_action = None
+        self.on_inactive_action = None
         self.on_hover_action = None
+        self.on_not_hover_action = None
+        self._hovering = False
 
-        self.pressing_down = None
-        self.pressing_down_time = 0
-        self.pointer_animation_clock = 0
-        self.pointer_animation_showing = True
+        self._pressing_down = None
+        self._pressing_down_time = 0
+        self._pointer_animation_clock = 0
+        self._pointer_animation_showing = True
 
         if height <= padding * 2 or width <= padding * 2:
             raise ValueError(
                 "Height and Width must be bigger than 2 times of padding")
 
-    def handle_event(self, events: list, dt: float) -> bool:
+    @property
+    def rect(self) -> pygame.Rect:
+        return pygame.Rect(self.x, self.y, self.width, self.height)
+
+    def handle_events(self, events: list, dt: float) -> bool:
         '''Called at the start of every game loop
 
         Parameters
@@ -72,27 +86,37 @@ class TextInput:
             Time difference from last frame
         '''
         for event in events:
+            # Hover handling
             if event.type == pygame.MOUSEMOTION:
                 if self.rect.collidepoint(event.pos):
                     self.background_color = self.hover_background_color
-                    if self.on_hover_action:
+                    if self.on_hover_action and not self._hovering:
                         self.on_hover_action(self)
+                    self._hovering = True
                 else:
                     self.background_color = self.active_background_color if self.active else self.inactive_background_color
+                    if self.on_not_hover_action and self._hovering:
+                        self.on_not_hover_action(self)
+                    self._hovering = False
+            # Clicked handling
             if event.type == pygame.MOUSEBUTTONDOWN:
+                if self._activate_mouse_button:
+                    if event.button != self._activate_mouse_button:
+                        continue
                 if self.rect.collidepoint(event.pos):
-                    self.background_color = self.active_background_color
-                    if self.on_active_action and not self.active:
-                        self.on_active_action(self)
-                    self.active = True
+                    self.activate()
                 else:
-                    self.active = False
-                    self.background_color = self.inactive_background_color
+                    self.deactivate()
+            # Check activate key
+            if self._activate_key and not self.active:
+                if event.type == pygame.KEYDOWN and event.key == self._activate_key:
+                    self.activate()
+                    continue
             if self.active:
                 # Check key presses
                 if event.type == pygame.KEYDOWN:
-                    self.pointer_animation_showing = True
-                    self.pointer_animation_clock = 0
+                    self._pointer_animation_showing = True
+                    self._pointer_animation_clock = 0
                     if event.key == pygame.K_RETURN:
                         self.on_submit()
                         continue
@@ -113,34 +137,34 @@ class TextInput:
                             event.unicode + self.text[self.pointer:]
                         self.pointer += 1
 
-                    self.pressing_down = event
-                    self.pressing_down_time = 0
+                    self._pressing_down = event
+                    self._pressing_down_time = 0
 
                 if event.type == pygame.KEYUP:
-                    if self.pressing_down and event.key == self.pressing_down.key:
-                        self.pressing_down = None
+                    if self._pressing_down and event.key == self._pressing_down.key:
+                        self._pressing_down = None
                         self.pressing_down_time = 0
 
         # Key hold down actions
-        if self.pressing_down_time > 0.5:
-            if self.pressing_down.key == pygame.K_BACKSPACE:
+        if self._pressing_down_time > 0.5:
+            if self._pressing_down.key == pygame.K_BACKSPACE:
                 if self.pointer > 0:
                     self.text = self.text[0:self.pointer -
                                           1] + self.text[self.pointer:]
                     self.pointer -= 1
-            elif self.pressing_down.key == pygame.K_LEFT:
+            elif self._pressing_down.key == pygame.K_LEFT:
                 if self.pointer > 0:
                     self.pointer -= 1
-            elif self.pressing_down.key == pygame.K_RIGHT:
+            elif self._pressing_down.key == pygame.K_RIGHT:
                 if self.pointer < len(self.text):
                     self.pointer += 1
             else:
-                self.text += self.pressing_down.unicode
+                self.text += self._pressing_down.unicode
                 self.pointer += 1
-            self.pressing_down_time -= 0.05
+            self._pressing_down_time -= 0.05
 
-        if self.pressing_down:
-            self.pressing_down_time += dt
+        if self._pressing_down:
+            self._pressing_down_time += dt
 
         # display surface creating
         if self.active:
@@ -152,21 +176,21 @@ class TextInput:
             pointer_loc = text_surface_width - text_width_right_of_pointer
             pointer_surface = pygame.Surface(
                 (self.font.get_height() // 10, self.font.get_height()))
-            if self.pointer_animation_showing:
+            if self._pointer_animation_showing:
                 pointer_surface.fill(self.text_color)
             else:
                 pointer_surface.fill(self.background_color)
 
-            if pointer_loc - self.position_shift + \
+            if pointer_loc - self._position_shift + \
                     pointer_surface.get_width() > self.width - self.padding * 2:
-                self.position_shift = pointer_loc + pointer_surface.get_width() - self.width + \
+                self._position_shift = pointer_loc + pointer_surface.get_width() - self.width + \
                     self.padding * 2
 
-            elif pointer_loc < self.position_shift and text_width_right_of_pointer > self.width:
-                self.position_shift = pointer_loc
+            elif pointer_loc < self._position_shift and text_width_right_of_pointer > self.width:
+                self._position_shift = pointer_loc
 
-            elif pointer_loc - self.position_shift + text_width_right_of_pointer < self.width - self.padding * 2 - pointer_surface.get_width():
-                self.position_shift = 0 if pointer_loc + pointer_surface.get_width() - self.width + \
+            elif pointer_loc - self._position_shift + text_width_right_of_pointer < self.width - self.padding * 2 - pointer_surface.get_width():
+                self._position_shift = 0 if pointer_loc + pointer_surface.get_width() - self.width + \
                     self.padding * 2 < 0 else pointer_loc + pointer_surface.get_width() - self.width + self.padding * 2
 
             self.text_surface = pygame.Surface(
@@ -188,20 +212,31 @@ class TextInput:
             self.text_surface = self.font.render(
                 self.placeholder, True, (100, 100, 100, 100))
 
-        self.pointer_animation_clock += dt
-        if self.pointer_animation_clock >= 0.5:
-            self.pointer_animation_clock -= 0.5
-            self.pointer_animation_showing = not self.pointer_animation_showing
+        self._pointer_animation_clock += dt
+        if self._pointer_animation_clock >= 0.5:
+            self._pointer_animation_clock -= 0.5
+            self._pointer_animation_showing = not self._pointer_animation_showing
+
+    def set_advanced_border_radius(
+            self,
+            border_top_left_radius: int,
+            border_top_right_radius: int,
+            border_bottom_left_radius: int,
+            border_bottom_right_radius: int):
+        self.border_top_left_radius = border_top_left_radius
+        self.border_top_right_radius = border_top_right_radius
+        self.border_bottom_left_radius = border_bottom_left_radius
+        self.border_bottom_right_radius = border_bottom_right_radius
 
     def set_active_background_color(self, color: tuple):
         self.active_background_color = color
 
     def set_inactive_background_color(self, color: tuple):
         self.inactive_background_color = color
-    
+
     def set_hover_background_color(self, color: tuple):
         self.hover_background_color = color
-    
+
     def set_on_hover(self, func):
         '''Set action when the text box is hovered on
 
@@ -211,8 +246,59 @@ class TextInput:
             Function to be called, take in 1 argument: self
         '''
         self.on_hover_action = func
+
+    def set_on_not_hover(self, func):
+        '''Set action when the text box is hovered off
+
+        Parameters
+        ----------
+        func
+            Function to be called, take in 1 argument: self
+        '''
+        self.on_not_hover_action = func
+
+    def set_mouse_button(self, button: int):
+        '''Set clicked mouse button on the text box to activate, or else any mouse button can activate it
+
+        Parameters
+        ----------
+        button : pygame mouse button, left-1, middle-2, right-3'''
+        self._activate_mouse_button = button
+
+    def set_activate_key(self, key: int):
+        '''Set pressed key to activate text box
+
+        Parameters
+        ----------
+        button : pygame keyboard key'''
+        self._activate_key = key
+
+    def activate(self):
+        '''Set text box to active'''
+        self.background_color = self.active_background_color
+        if self.on_active_action and not self.active:
+            self.on_active_action(self)
+        self.active = True
+
+    def deactivate(self):
+        '''Set text box to inactive'''
+        self.background_color = self.inactive_background_color
+        if self.on_inactive_action and self.active:
+            self.on_inactive_action(self)
+        self.active = False
+
     def set_on_active(self, func):
         '''Set action when the text box is clicked and set from not active to active
+
+        Parameters
+        ----------
+        func
+            Function to be called, take in 1 argument: self
+        '''
+        self.on_active_action = func
+
+    def set_on_inactive(self, func):
+        '''Set action when the text box is set from active to not active
 
         Parameters
         ----------
@@ -247,30 +333,39 @@ class TextInput:
 
         self.pointer = 0
         self.text = ""
-        self.active = False
         self.background_color = self.inactive_background_color
+        if self.on_inactive_action:
+            self.on_inactive_action(self)
+        self.active = False
 
     def draw(self, screen: pygame.Surface):
-        pygame.draw.rect(screen, self.background_color, self.rect)
+        pygame.draw.rect(
+            screen,
+            self.background_color,
+            self.rect,
+            border_radius=self.border_radius,
+            border_top_left_radius=self.border_top_left_radius,
+            border_top_right_radius=self.border_top_right_radius,
+            border_bottom_left_radius=self.border_bottom_left_radius,
+            border_bottom_right_radius=self.border_bottom_right_radius)
         pygame.draw.rect(
             screen,
             self.outline_color,
-            (self.rect.x -
-             self.outline_width,
-             self.rect.y -
-             self.outline_width,
-             self.rect.width +
-             self.outline_width *
-             2,
-             self.rect.height +
-             self.outline_width *
-             2),
-            self.outline_width)
+            (self.rect.x - self.outline_width,
+             self.rect.y - self.outline_width,
+             self.rect.width + self.outline_width * 2,
+             self.rect.height + self.outline_width * 2),
+            self.outline_width,
+            border_radius=self.border_radius,
+            border_top_left_radius=self.border_top_left_radius,
+            border_top_right_radius=self.border_top_right_radius,
+            border_bottom_left_radius=self.border_bottom_left_radius,
+            border_bottom_right_radius=self.border_bottom_right_radius)
         display_surface = pygame.Surface(
             (self.rect.width - self.padding * 2,
              self.rect.height - self.padding * 2))
         display_surface.fill(self.background_color)
-        display_surface.blit(self.text_surface, (-self.position_shift, 0))
+        display_surface.blit(self.text_surface, (-self._position_shift, 0))
         screen.blit(
             display_surface,
             (self.rect.x +
